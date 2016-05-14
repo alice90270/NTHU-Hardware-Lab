@@ -23,85 +23,96 @@ module Lab7(ROW, DIGIT, DISPLAY, COLUMN, clk, reset, add, sub );
 	input [3:0] COLUMN;
 	output reg [3:0] ROW, DIGIT;
 	output reg [8:0] DISPLAY;
+	
 	reg[14:1] DIVIDER;
 	wire DB_add, DB_sub, DB_reset;
-	reg[3:0] shift_reg,shift_reg1,shift_reg2; // use shift_regto filter pushbutton bounce
-	reg[8:0] Result;
-	reg[4:0] A,B;
-	reg flag;
 	reg [3:0] SCAN_CODE;
 	reg [3:0] DEBOUNCE_COUNT;
 	reg PRESS;
 	wire PRESS_VALID;
-	
+	reg [3:0]add_count,sub_count,reset_count;
 	reg[3:0] DECODE_BCD;
-	reg[3:0] ENABLE;
-	reg [7:0] SEGMENT;
 	reg[15:0] KEY_BUFFER;
 	reg[3:0] KEY_CODE;
+	reg[1:0] state;
+	reg[7:0]result;
 
 /***********************
 * Clock Divider*
 ***********************/
-	always@(posedge clk or negedge reset)
+	always@(posedge clk)
 	begin
-		if(!reset)
+		/*if(!reset)
 		DIVIDER <= {12'h000,2'b00};
-		else
+		else*/
 		DIVIDER <= DIVIDER + 1;
 	end
 	assign clk_15 = DIVIDER[14];
 	
 /********************
-* Debounce Circuit *
+* Debounce Add Sub Circuit *
 ********************/
-	always@( clk_15 or  add)
-	begin
-	shift_reg[3:1] <= shift_reg[2:0];
-	shift_reg[0] <= DB_add;
-	end
-	assign DB_add = ((shift_reg== 4'b0000) ? 1'b0 : 1'b1);
-	
-	always@( clk_15 or  sub)
-	begin
-	shift_reg1[3:1] <= shift_reg1[2:0];
-	shift_reg1[0] <= DB_sub;
-	end
-	assign DB_sub = ((shift_reg1== 4'b0000) ? 1'b0 : 1'b1);
-	
-	always@( clk_15 or  reset)
-	begin
-	shift_reg2[3:1] <= shift_reg2[2:0];
-	shift_reg2[0] <= DB_reset;
-	end
-	assign DB_reset = ((shift_reg2== 4'b0000) ? 1'b0 : 1'b1);	
-	
-	
-/********************
-* Adder & Subtracter *
-********************/
-	always@(DB_add or DB_sub or DB_reset)
-	begin
-		if(DB_add==1)
+	always@(posedge clk_15)
 		begin
-		flag=1;
-		Result <= A+B;
+		if(!reset)
+		add_count <= 4'h0;
+		else if(add)
+		add_count <= 4'h0;
+		else if(add_count <= 4'hE)
+		add_count <= add_count + 1;
 		end
-		
-		else if(DB_sub==1)
-			begin
-			flag=2;
-			Result <= A-B;
-			end
-		else if(DB_reset==1)	
-			begin
-				A <=4'b0000;
-				B <=-4'b0000;
-				flag=0;
-			end
-		else flag=0;
-	end
+		assign DB_add = (add_count == 4'hD) ?1'b1 : 1'b0;
 	
+	always@(posedge clk_15)
+		begin
+		if(!reset)
+		sub_count <= 4'h0;
+		else if(sub)
+		sub_count <= 4'h0;
+		else if(sub_count <= 4'hE)
+		sub_count <= sub_count + 1;
+		end
+		assign DB_sub = (sub_count == 4'hD) ?1'b1 : 1'b0;
+		
+	always@(posedge clk_15)
+		begin
+		if(reset)
+		reset_count <= 4'h0;
+		else if(reset_count <= 4'hE)
+		reset_count <= reset_count + 1;
+		end
+		assign DB_reset = (reset_count == 4'hD) ?1'b1 : 1'b0;
+	
+
+/********************
+* State *
+********************/
+	always @(posedge clk_15 or posedge DB_reset)
+	begin
+		if(DB_reset) 
+			state<= 2'b00;
+		else
+			begin
+			case(state)
+				2'b00:	
+					begin
+						if(PRESS_VALID)	state <= 2'b01;
+						else 			state <= 2'b00;
+					end
+				2'b01:
+					begin
+						if(PRESS_VALID)	state <= 2'b10;
+						else 			state <= 2'b01;
+					end
+				2'b10:
+					begin
+						if(DB_reset)	state <= 2'b00;
+						else 			state <= 2'b10;
+					end
+				default:state<= 2'b00;
+			endcase
+			end
+	end
 
 /********************
 * Keyboard *
@@ -109,9 +120,9 @@ module Lab7(ROW, DIGIT, DISPLAY, COLUMN, clk, reset, add, sub );
 	/***************************
 	* Scanning Code Generator *
 	***************************/
-		always@(posedge clk or negedge DB_reset)
+		always@(posedge clk or posedge DB_reset)
 		begin
-			if(!DB_reset)
+			if(DB_reset)
 			SCAN_CODE <= 4'h0;
 			else if(PRESS)
 			SCAN_CODE <= SCAN_CODE + 1;
@@ -134,13 +145,15 @@ module Lab7(ROW, DIGIT, DISPLAY, COLUMN, clk, reset, add, sub );
 			2'b10 : PRESS = COLUMN[2];
 			2'b11 : PRESS = COLUMN[3];
 			endcase
+			
+			
 		end
 	/********************
 	* Debounce Circuit *
 	********************/
-		always@(posedge clk_15 or negedge DB_reset)
+		always@(posedge clk_15 or posedge DB_reset)
 		begin
-			if(!DB_reset)
+			if(DB_reset)
 			DEBOUNCE_COUNT <= 4'h0;
 			else if(PRESS)
 			DEBOUNCE_COUNT <= 4'h0;
@@ -151,107 +164,168 @@ module Lab7(ROW, DIGIT, DISPLAY, COLUMN, clk, reset, add, sub );
 	/*********************************
 	* Fetch Key Code * Shift Buffer *
 	**********************************/
-		always@(negedge clk_15 or negedge DB_reset)
+		always@(negedge clk_15 or posedge DB_reset)
 		begin
-			if(!DB_reset)
+			if(DB_reset)
 			begin
 				KEY_CODE <= 4'hC;	//show 0000
 				KEY_BUFFER <= 16'h0000;
 			end
-			else if(PRESS_VALID)
-			begin
-				KEY_CODE <= SCAN_CODE;
-				KEY_BUFFER[15:4] <= KEY_BUFFER[11:0];
-				
-				case(SCAN_CODE)
-					4'hC : KEY_BUFFER[3:0] <= 4'h0; // 0
-					4'hD : KEY_BUFFER[3:0] <= 4'h1; // 1
-					4'h9 : KEY_BUFFER[3:0] <= 4'h2; // 2
-					4'h5 : KEY_BUFFER[3:0] <= 4'h3; // 3
-					4'hE : KEY_BUFFER[3:0] <= 4'h4; // 4
-					4'hA : KEY_BUFFER[3:0] <= 4'h5; // 5
-					4'h6 : KEY_BUFFER[3:0] <= 4'h6; // 6
-					4'hF : KEY_BUFFER[3:0] <= 4'h7; // 7
-					4'hB : KEY_BUFFER[3:0] <= 4'h8; // 8 -8
-					4'h7 : KEY_BUFFER[3:0] <= 4'h9; // 9 -7
-					4'h8 : KEY_BUFFER[3:0] <= 4'hA; // A -6
-					4'h4 : KEY_BUFFER[3:0] <= 4'hB; // B -5
-					4'h3 : KEY_BUFFER[3:0] <= 4'hC; // C -4
-					4'h2 : KEY_BUFFER[3:0] <= 4'hD; // D -3
-					4'h1 : KEY_BUFFER[3:0] <= 4'hE; // E -2
-					4'h0 : KEY_BUFFER[3:0] <= 4'hF; // F -1
+			else begin
+				case(state)
+					2'b00:	
+						begin
+						KEY_BUFFER[7:0] <= 8'b00000000;
+							if(PRESS_VALID)	
+								begin
+									case(SCAN_CODE)
+										4'hC : KEY_BUFFER[15:12] <= 4'h0; // 0
+										4'hD : KEY_BUFFER[15:12] <= 4'h1; // 1
+										4'h9 : KEY_BUFFER[15:12] <= 4'h2; // 2
+										4'h5 : KEY_BUFFER[15:12] <= 4'h3; // 3
+										4'hE : KEY_BUFFER[15:12] <= 4'h4; // 4
+										4'hA : KEY_BUFFER[15:12] <= 4'h5; // 5
+										4'h6 : KEY_BUFFER[15:12] <= 4'h6; // 6
+										4'hF : KEY_BUFFER[15:12] <= 4'h7; // 7
+										4'hB : KEY_BUFFER[15:12] <= 4'h8; // 8 -8 
+										4'h7 : KEY_BUFFER[15:12] <= 4'h9; // 9 -7
+										4'h8 : KEY_BUFFER[15:12] <= 4'hA; // A -6
+										4'h4 : KEY_BUFFER[15:12] <= 4'hB; // B -5
+										4'h3 : KEY_BUFFER[15:12] <= 4'hC; // C -4
+										4'h2 : KEY_BUFFER[15:12] <= 4'hD; // D -3
+										4'h1 : KEY_BUFFER[15:12] <= 4'hE; // E -2
+										4'h0 : KEY_BUFFER[15:12] <= 4'hF; // F -1
+									endcase
+									
+								end
+							else 	KEY_BUFFER[15:12] <= 4'h0;
+						end
+					2'b01:
+						begin
+						KEY_BUFFER[7:0] <= 8'b00000000;
+							if(PRESS_VALID)	
+								begin
+									case(SCAN_CODE)
+										4'hC : KEY_BUFFER[11:8] <= 4'h0; // 0
+										4'hD : KEY_BUFFER[11:8] <= 4'h1; // 1
+										4'h9 : KEY_BUFFER[11:8] <= 4'h2; // 2
+										4'h5 : KEY_BUFFER[11:8] <= 4'h3; // 3
+										4'hE : KEY_BUFFER[11:8] <= 4'h4; // 4
+										4'hA : KEY_BUFFER[11:8] <= 4'h5; // 5
+										4'h6 : KEY_BUFFER[11:8] <= 4'h6; // 6
+										4'hF : KEY_BUFFER[11:8] <= 4'h7; // 7
+										4'hB : KEY_BUFFER[11:8] <= 4'h8; // 8 -8 
+										4'h7 : KEY_BUFFER[11:8] <= 4'h9; // 9 -7
+										4'h8 : KEY_BUFFER[11:8] <= 4'hA; // A -6
+										4'h4 : KEY_BUFFER[11:8] <= 4'hB; // B -5
+										4'h3 : KEY_BUFFER[11:8] <= 4'hC; // C -4
+										4'h2 : KEY_BUFFER[11:8] <= 4'hD; // D -3
+										4'h1 : KEY_BUFFER[11:8] <= 4'hE; // E -2
+										4'h0 : KEY_BUFFER[11:8] <= 4'hF; // F -1
+									endcase
+								end
+							else 	KEY_BUFFER[11:8] <= 4'h0;
+						end
+					2'b10:
+						begin
+							if(DB_add)	
+								begin
+									KEY_BUFFER[7:0] <= $signed(KEY_BUFFER[15:12])+$signed(KEY_BUFFER[11:8]);
+								end
+							else if(DB_sub)
+								begin
+									KEY_BUFFER[7:0] <= $signed(KEY_BUFFER[15:12])-$signed(KEY_BUFFER[11:8]);
+								end
+							else 	KEY_BUFFER[7:0] <= KEY_BUFFER[7:0];
+						end
+					default:	KEY_BUFFER[7:0] <= 8'b00000000;
 				endcase
-				
-				if(flag==0)
-					begin
-					A[3:0] <= 4'h0;
-					B[3:0] <= 4'h0;
-					Result <= 8'h00;
-					end
-				else if(flag==1)
-					begin
-					A[3:0] <= KEY_BUFFER[3:0];
-					flag=flag+1;
-					end
-				else if(flag==2)
-					begin
-					B[3:0] <= KEY_BUFFER[3:0];
-					flag=flag+1;
-					end
-			end		
+			end
 		end
 		
 	/***************************
-	* Enable Display Location *
+	* DIGIT Display Location *
 	***************************/
-		always@(negedge clk_15 or negedge DB_reset)
+		always@(negedge clk_15 or posedge DB_reset)
 		begin
-			if (!DB_reset)
-			ENABLE <= 4'b0000;
+			if (DB_reset)
+			DIGIT <= 4'b0000;
 			else
 			begin
-			 case(ENABLE)
-				4'b0000: ENABLE<=4'b1110;
-				default: ENABLE<={ENABLE[2],ENABLE[1],ENABLE[0],ENABLE[3]};
+			 case(DIGIT)
+				4'b0000: DIGIT<=4'b1110;
+				default: DIGIT<={DIGIT[2],DIGIT[1],DIGIT[0],DIGIT[3]};
 			 endcase
 			end
 		end
 	/****************************
 	* Data Display Multiplexer*
 	****************************/
-		always@(ENABLE or A or B or Result) 
+		always@(DIGIT or KEY_BUFFER) 
 		begin
-			case(ENABLE)
-				4'b1110:DECODE_BCD = Result[3:0];
-				4'b1101:DECODE_BCD = Result[7:4];
-				4'b1011:DECODE_BCD = B[3:0];
-				4'b0111:DECODE_BCD = A[3:0];
+			if(KEY_BUFFER[7])
+				begin
+				result = ~(KEY_BUFFER[7:0]-1);
+				end
+			else				result = KEY_BUFFER[7:0];
+			case(DIGIT)
+				4'b1011:DECODE_BCD = KEY_BUFFER[11:8];	//B
+				4'b0111:DECODE_BCD = KEY_BUFFER[15:12];	//A
+				//result
+				4'b1101:
+					if(result >= 8'd10)	DECODE_BCD = 4'b0001;
+					else				DECODE_BCD = 4'b0000;
+				4'b1110:
+					if(result >= 8'd10)	DECODE_BCD = result-8'd10;
+					else 				DECODE_BCD = result;
 			endcase
 		end
 	/********************************
-	* Hex To Seven Segment Decoder *
+	* Hex To Seven DISPLAY Decoder *
 	********************************/
 		always@(DECODE_BCD)
 		begin
+			if(DIGIT==4'b1110)
+				begin
 				case(DECODE_BCD)
-					4'h0 : SEGMENT = 9'b100000011;//0
-					4'h1 : SEGMENT = 9'b110011111;//1
-					4'h2 : SEGMENT = 9'b100100100;//2
-					4'h3 : SEGMENT = 9'b100001100;//3
-					4'h4 : SEGMENT = 9'b110011000;//4
-					4'h5 : SEGMENT = 9'b101001000;//5
-					4'h6 : SEGMENT = 9'b101000000;//6
-					4'h7 : SEGMENT = 9'b100011111;//7
-					4'h8 : SEGMENT = 9'b000000000;//8
-					4'h9 : SEGMENT = 9'b000011000;//9
-					4'hA : SEGMENT = 9'b000010000;//A
-					4'hB : SEGMENT = 9'b011000000;//B
-					4'hC : SEGMENT = 9'b001100011;//C
-					4'hD : SEGMENT = 9'b010000100;//D
-					4'hE : SEGMENT = 9'b001100000;//E
-					4'hF : SEGMENT = 9'b001110000;//F
+					4'h0 : DISPLAY[7:0] = 8'b00000011;//0
+					4'h1 : DISPLAY[7:0] = 8'b10011111;//1
+					4'h2 : DISPLAY[7:0] = 8'b00100100;//2
+					4'h3 : DISPLAY[7:0] = 8'b00001100;//3
+					4'h4 : DISPLAY[7:0] = 8'b10011000;//4
+					4'h5 : DISPLAY[7:0] = 8'b01001000;//5
+					4'h6 : DISPLAY[7:0] = 8'b01000000;//6
+					4'h7 : DISPLAY[7:0] = 8'b00011111;//7
+					4'h8 : DISPLAY[7:0] = 8'b00000000;//8
+					4'h9 : DISPLAY[7:0] = 8'b00011000;//9
+					default: DISPLAY[7:0] = 8'b00000011;
 				endcase
+				if(KEY_BUFFER[7])	DISPLAY[8]=1'b0;
+				else				DISPLAY[8]=1'b1;
+				end
+			else
+				begin
+				case(DECODE_BCD)
+					4'h0 : DISPLAY = 9'b100000011;//0
+					4'h1 : DISPLAY = 9'b110011111;//1
+					4'h2 : DISPLAY = 9'b100100100;//2
+					4'h3 : DISPLAY = 9'b100001100;//3
+					4'h4 : DISPLAY = 9'b110011000;//4
+					4'h5 : DISPLAY = 9'b101001000;//5
+					4'h6 : DISPLAY = 9'b101000000;//6
+					4'h7 : DISPLAY = 9'b100011111;//7
+					4'h8 : DISPLAY = 9'b000000000;//8
+					4'h9 : DISPLAY = 9'b000011111;//9
+					4'hA : DISPLAY = 9'b001000000;//A
+					4'hB : DISPLAY = 9'b001001000;//B
+					4'hC : DISPLAY = 9'b010011000;//C
+					4'hD : DISPLAY = 9'b000001100;//D
+					4'hE : DISPLAY = 9'b000100100;//E
+					4'hF : DISPLAY = 9'b010011111;//F
+				endcase
+				end
 		end
-
+		
 endmodule
 
+		
